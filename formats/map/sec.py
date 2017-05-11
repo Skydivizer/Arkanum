@@ -1,12 +1,13 @@
 from formats.helpers import FileStruct
 from formats.obj import Object
+from collections import UserList
 
 import io
 
 from typing import List, Any, Tuple
 
 
-class SectorLights(object):
+class SectorLights(UserList):
     """
     Binary file format:
     - Light count (4 bytes)
@@ -19,16 +20,7 @@ class SectorLights(object):
     count_parser = FileStruct(count_format)
 
     def __init__(self, raw_lights: List[Any]):
-
-        self.raw_lights = raw_lights
-
-    def __len__(self) -> int:
-
-        return len(self.raw_lights)
-
-    def __getitem__(self, index: int) -> int:
-
-        return self.raw_lights[index]
+        self.data = raw_lights
 
     @classmethod
     def read_from(cls, sector_file: io.FileIO) -> "SectorLights":
@@ -45,15 +37,15 @@ class SectorLights(object):
 
     def write_to(self, sector_file: io.FileIO) -> None:
 
-        count = len(self.raw_lights)
+        count = len(self)
         self.count_parser.pack_into_file(sector_file, count)
 
         if (count > 0):
             fmt = "<" + self.raw_format * count
-            FileStruct(fmt).pack_into_file(sector_file, *self.raw_lights)
+            FileStruct(fmt).pack_into_file(sector_file, *self)
 
 
-class SectorTiles(object):
+class SectorTiles(UserList):
     """
     Binary file format:
     - Tile (4 bytes) * 4096
@@ -76,17 +68,9 @@ class SectorTiles(object):
     raw_tiles_format = "<4096I"
     raw_tiles_parser = FileStruct(raw_tiles_format)
 
-    def __len__(self) -> int:
-
-        return len(self.raw_tiles)
-
-    def __getitem__(self, index: int) -> int:
-
-        return self.raw_tiles[index]
-
     def __init__(self, raw_tiles: List[Any]):
 
-        self.raw_tiles = raw_tiles
+        self.data = raw_tiles
 
     @classmethod
     def read_from(cls, sector_file: io.FileIO) -> "SectorTiles":
@@ -97,10 +81,10 @@ class SectorTiles(object):
 
     def write_to(self, sector_file: io.FileIO) -> None:
 
-        raw_tiles_data = self.raw_tiles_parser.pack_into_file(sector_file, *self.raw_tiles)
+        self.raw_tiles_parser.pack_into_file(sector_file, *self)
 
 
-class SectorRoofs(object):
+class SectorRoofs(UserList):
     """
         Binary file format:
     - Roof (4 bytes) * 256
@@ -115,15 +99,7 @@ class SectorRoofs(object):
     def __init__(self, type: int, raw_roofs: List[Any]):
 
         self.type = type
-        self.raw_roofs = raw_roofs
-
-    def __len__(self) -> int:
-
-        return len(self.raw_roofs)
-
-    def __getitem__(self, index: int) -> int:
-
-        return self.raw_roofs[index]
+        self.data = raw_roofs
 
     @classmethod
     def read_from(cls, sector_file: io.FileIO) -> "SectorRoofs":
@@ -142,10 +118,10 @@ class SectorRoofs(object):
         self.type_parser.pack_into_file(sector_file, self.type)
 
         if self.type == 0:
-            self.raw_roofs_parser.pack_into_file(sector_file, *self.raw_roofs)
+            self.raw_roofs_parser.pack_into_file(sector_file, *self)
 
 
-class SectorTileScripts(object):
+class SectorTileScripts(UserList):
     """
     Binary file format:
     - Tile scripts count (4 bytes)
@@ -167,15 +143,7 @@ class SectorTileScripts(object):
 
     def __init__(self, raw_scripts: List[Any]=[]):
 
-        self.raw_scripts = raw_scripts
-
-    def __len__(self) -> int:
-
-        return len(self.raw_scripts)
-
-    def __getitem__(self, index: int) -> int:
-
-        return self.raw_scripts[index]
+        self.data = raw_scripts
 
     @classmethod
     def read_from(cls, sector_file: io.FileIO) -> "SectorTileScripts":
@@ -192,14 +160,14 @@ class SectorTileScripts(object):
 
     def write_to(self, sector_file: io.FileIO) -> None:
 
-        count = len(self.raw_scripts)
+        count = len(self)
         count_data = self.count_parser.pack_into_file(sector_file, count)
 
         if (count > 0):
             fmt = "<" + self.raw_format * count
-            raw_data = FileStruct(fmt).pack_into_file(sector_file, *self.raw_scripts)
+            FileStruct(fmt).pack_into_file(sector_file, *self)
 
-class SectorBlockades(object):
+class SectorBlockades(UserList):
     """
     Binary file format:
     - Blocked (1 bit) * 4096
@@ -209,15 +177,7 @@ class SectorBlockades(object):
 
     def __init__(self, raw_blockades: List[Any]):
 
-        self.raw_blockades = raw_blockades
-
-    def __len__(self) -> int:
-
-        return len(self.raw_blockades)
-
-    def __getitem__(self, index: int) -> int:
-
-        return self.raw_blockades[index]
+        self.data = raw_blockades
 
     @classmethod
     def read_from(cls, sector_file: io.FileIO) -> "SectorBlockades":
@@ -228,7 +188,7 @@ class SectorBlockades(object):
 
     def write_to(self, sector_file: io.FileIO) -> None:
 
-        self.raw_blockades_parser.pack_into_file(sector_file, self.raw_blockades)
+        self.raw_blockades_parser.pack_into_file(sector_file, self.data)
 
 
 class SectorInfo(object):
@@ -388,23 +348,14 @@ class SectorInfo(object):
                                             self.music, self.ambient, *self.blockades)
 
 
-class SectorObjects(object):
+class SectorObjects(UserList):
 
     length_format = "I"
     length_parser = FileStruct("<" + length_format)
 
     def __init__(self, objects: List[Any]=[]):
 
-        self.objects = objects
-
-    def __len__(self):
-        return len(self.objects)
-
-    def __getitem__(self, index: int) -> Object:
-        return self.objects[index]
-
-    def __iter__(self):
-        return iter(self.objects)
+        self.data = objects
 
     @classmethod
     def read_from(cls, sector_file: io.FileIO) -> "SectorInfo":
@@ -416,8 +367,6 @@ class SectorObjects(object):
         sector_file.seek(-cls.length_parser.size, 2)
 
         length,  = cls.length_parser.unpack_from_file(sector_file)
-
-        print(length)
 
         objects = []
 

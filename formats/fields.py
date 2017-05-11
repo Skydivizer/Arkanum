@@ -1,1167 +1,588 @@
 from formats.helpers import FileStruct
 
-default_field_parser = FileStruct("<i")
-position_field_parser = FileStruct("<B2I")
-array_field_parser = FileStruct("<B3I")
+sint_parser = FileStruct("<i")
 
-flag_size_format = "I"
+byte_parser =  FileStruct("<B")
+int_parser = FileStruct("<I")
+long_parser = FileStruct("<Q")
 
-def default_field_parse(file):
-        return default_field_parser.unpack_from_file(file)[0]
+class ByteParser(object):
+    parser = byte_parser
 
-def position_field_parse(file):
-    return position_field_parser.unpack_from_file(file)
+    @classmethod
+    def read_from(cls, file):
 
-def array_field_parse(file):
+        return cls.parser.unpack_from_file(file)[0]
+
+    @classmethod
+    def write_to(cls, file, data):
+
+        cls.parser.pack_into_file(file, (data))
+
+class DefaultParser(object):
+    parser = sint_parser
+
+    @classmethod
+    def read_from(cls, file):
+
+        return cls.parser.unpack_from_file(file)[0]
+
+    @classmethod
+    def write_to(cls, file, data):
+
+        cls.parser.pack_into_file(file, (data))
+
+class PositionParser(object):
+    exists_parser = byte_parser
+    parser = FileStruct("<2I")
+
+    @classmethod
+    def read_from(cls, file):
+
+        exists = cls.exists_parser.unpack_from_file(file)[0]
+
+        if exists:
+            return cls.parser.unpack_from_file(file)
+
+        else:
+            return None
+
+    @classmethod
+    def write_to(cls, file, data):
+
+        if data:
+            cls.exists_parser.pack_into_file(file, (1))
+            cls.parser.pack_into_file(data)
+
+        else:
+            cls.exists_parser.pack_into_file(file, (0))
+
+
+class ArrayParser(object):
     "Array fields have a variable number of elements of a given size."
-    # _1 ??,
-    # _2 List ID(?)
-    _1, element_size, element_count, _2 = array_field_parser.unpack_from_file(file)
+    exists_parser = byte_parser
+    header_parser = FileStruct("<3I")
+    flags_size_format = "I"
 
-    # Unpack array + flag size
-    array_format = ("%ds" % element_size) * element_count
-    unpacked = FileStruct("<" + array_format + flag_size_format).unpack_from_file(file)
-    array = unpacked[:-1]
-    flags_size = unpacked[-1]
+    @classmethod
+    def read_from(cls, file):
 
-    # Unpack flags
-    raw_flags = FileStruct("<%dB"% (flags_size * 4)).unpack_from_file(file)
-    flags = int.from_bytes(raw_flags, 'little')
+        exists = cls.exists_parser.unpack_from_file(file)[0]
 
-    return _1, _2, array, flags
+        if exists:
+            # _1 List ID(?)
+            element_size, element_count, _1 = cls.header_parser.unpack_from_file(file)
+
+            # Unpack array + flag size
+            array_format = ("%ds" % element_size) * element_count
+            unpacked = FileStruct("<" + array_format + cls.flags_size_format).unpack_from_file(file)
+            array = unpacked[:-1]
+            flags_size = unpacked[-1]
+
+            # Unpack flags
+            raw_flags = FileStruct("<%dB"% (flags_size * 4)).unpack_from_file(file)
+            flags = int.from_bytes(raw_flags, 'little')
+
+            return _1, array, flags, flags_size
+
+        else:
+            return None
+
+    @classmethod
+    def write_to(cls, file, data):
+
+        if data:
+            cls.exists_parser.pack_into_file(file, (1))
+
+            _1, array, flags, flags_size = data
+            element_count = len(array)
+            element_size = len(array[0])
+
+            cls.header_parser.pack_into_file(file, (element_size, element_count, _1))
+            
+            array_format = ("%ds" % element_size) * element_count
+            flags_format = "<%dB"% (flags_size * 4)
+            FileStruct("<" + array_format + flags_size_format + flags_format).pack_into_file(file, (*array, flags_size, *flags))
+
+        else:
+            cls.exists_parser.pack_into_file(file, (0))
+
+
+class StringParser(object):
+    exists_parser = byte_parser
+    size_parser = int_parser
+    size_fmt = "I"
+
+    @classmethod
+    def read_from(cls, file):
+
+        exists, = cls.exists_parser.unpack_from_file(file)
+
+        if exists:
+            size, = cls.size_parser.unpack_from_file(file)
+
+            string = FileStruct("%ds" % (size + 1)).unpack_from_file(file)
+
+            return string
+
+        else:
+            return None
+
+    @classmethod
+    def write_to(cls, file, data):
+        if data:
+            cls.exists_parser.pack_into_file(file, (1))
+
+            size = len(data) - 1
+
+            string_fmt = "%ds" % (size + 1)
+
+            FileStruct("<" + cls.size_fmt + string_fmt).pack_into_file(file, (size, *data))
+
+        else:
+            cls.exists_parser.pack_into_file(file, (0))
+
+
+class NullParser(object):
+
+    @classmethod
+    def read_from(cls, file):
+        pass
+
+    @classmethod
+    def write_to(cls, file, data):
+        pass
+
+
+class PadByteParser(object):
+    parser = byte_parser
+
+    @classmethod
+    def read_from(cls, file):
+        val, = cls.parser.unpack_from_file(file)
+
+        if val != 0:
+            print(val)
+
+    @classmethod
+    def write_to(cls, file):
+        cls.parser.pack_into_file(file, (0))
+
+
+class PadIntParser(object):
+    parser = int_parser
+
+    @classmethod
+    def read_from(cls, file):
+        val, = cls.parser.unpack_from_file(file)
+
+        if val != 0:
+            print(val)
+
+    @classmethod
+    def write_to(cls, file):
+        cls.parser.pack_into_file(file, (0))
+
+
+class PadLongParser(object):
+    parser = long_parser
+
+    @classmethod
+    def read_from(cls, file):
+        val, = cls.parser.unpack_from_file(file)
+
+        if val != 0:
+            print(val)
+
+    @classmethod
+    def write_to(cls, file):
+        cls.parser.pack_into_file(file, (0))
+
 
 class Fields:
     "All serialized objects have a collection of optional fields based on their type."
 
-    # TODO: Figure out format/size of all used fields.
+    # TODO: Figure out format/size of all used fields. 
     # TODO: Figure out actual meaning of fields.
 
     base_fields = (
-        ("art_1", default_field_parse),
-        ("position", position_field_parse),
-        ("offset_x", default_field_parse),
-        ("offset_y", default_field_parse),
-        ("_b4", default_field_parse),  # no .mob file
-        ("_b5", default_field_parse),  # no .mob file
-        ("_b6", default_field_parse),  # no .mob file
-        ("_b7", default_field_parse),  # no .mob file
-        ("_b8", default_field_parse),  # only /BessieToonesMine-fixed/G_46602902_8719_4683_B3A5_D48026FAAA63.mob
-        ("_b9", default_field_parse),  # no .mob file
-        ("_b10", default_field_parse),  # only /BessieToonesMine-fixed/G_46602902_8719_4683_B3A5_D48026FAAA63.mob
-        ("scale", default_field_parse),  
-        ("light_flags", default_field_parse),
-        ("light_art", default_field_parse),
-        ("light_color", default_field_parse),
-        ("_b15", default_field_parse),  # no .mob file
-        ("_b16", default_field_parse),  # Multiple
-        ("_b17", default_field_parse),  # no .mob file
-        ("object_flags_1", default_field_parse),
-        ("object_flags_2", default_field_parse),
-        ("_b20", default_field_parse),  # no .mob file
-        ("internal_name", default_field_parse),
-        ("known_name", default_field_parse),
-        ("art_2", default_field_parse),
-        ("_b24", default_field_parse),  # only Arcanum1-024-fixed/G_818CB717_3508_42E4_BC46_658FD20421C1.mob
-        ("armor_class", default_field_parse),
-        ("hp_spent", default_field_parse),
-        ("hp_adjustment", default_field_parse),
-        ("hp_damage_taken", default_field_parse),
-        ("_b29", default_field_parse),  # no .mob file
-        ("resistances", array_field_parse),
-        ("scripts", array_field_parse),
-        ("_b32", default_field_parse),  # no .mob file
-        ("_b33", default_field_parse),  # no .mob file
-        ("_b34", default_field_parse),  # no .mob file
-        ("_b35", default_field_parse),  # no .mob file
-        ("_b36", default_field_parse),  # no .mob file
-        ("_b37", default_field_parse),  # no .mob file
-        ("_b38", default_field_parse),  # no .mob file
-        ("_b39", default_field_parse),  # no .mob file
-        ("_b40", default_field_parse),  # no .mob file
-        ("_b41", default_field_parse),  # no .mob file
-        ("_b42", default_field_parse),  # no .mob file
-        ("_b43", default_field_parse),  # no .mob file
-        ("_b44", default_field_parse),  # no .mob file
-        ("_b45", default_field_parse),  # no .mob file
-        ("_b46", default_field_parse),  # no .mob file
-        ("_b47", default_field_parse),  # no .mob file
-        ("_b48", default_field_parse),  # no .mob file
-        ("_b49", default_field_parse),  # no .mob file
-        ("_b50", default_field_parse),  # no .mob file
-        ("_b51", default_field_parse),  # no .mob file
-        ("_b52", default_field_parse),  # no .mob file
-        ("_b53", default_field_parse),  # no .mob file
-        ("_b54", default_field_parse),  # no .mob file
-        ("_b55", default_field_parse),  # no .mob file
-        ("_b56", default_field_parse),  # no .mob file
-        ("_b57", default_field_parse),  # no .mob file
-        ("_b58", default_field_parse),  # no .mob file
-        ("_b59", default_field_parse),  # no .mob file
-        ("_b60", default_field_parse),  # no .mob file
-        ("_b61", default_field_parse),  # no .mob file
-        ("_b62", default_field_parse),  # no .mob file
-        ("_b63", default_field_parse)  # no .mob file
+        ("current_art", DefaultParser),
+        ("position", PositionParser),
+        ("offset_x", DefaultParser),
+        ("offset_y", DefaultParser),
+        ("shadow", DefaultParser),
+        ("overlay_front", ArrayParser),
+        ("overlay_back", ArrayParser),
+        ("underlay", ArrayParser),
+        ("blit_flags", DefaultParser),
+        ("blit_color", DefaultParser),
+        ("blit_alpha", DefaultParser),
+        ("blit_scale", DefaultParser),  
+        ("light_flags", DefaultParser),
+        ("light_art", DefaultParser),
+        ("light_color", DefaultParser),
+        ("overlay_light_flags", ArrayParser),
+        ("overlay_light_art", ArrayParser),
+        ("overlay_light_color", ArrayParser),
+        ("object_flags_1", DefaultParser),
+        ("object_flags_2", DefaultParser),
+        ("blocking_mask", DefaultParser),
+        ("internal_name ", DefaultParser),
+        ("known_name", DefaultParser),
+        ("art", DefaultParser),
+        ("destroyed_art", DefaultParser),
+        ("armor_class", DefaultParser),
+        ("hit_points", DefaultParser),
+        ("hit_points_adj", DefaultParser),
+        ("hit_points_damage", DefaultParser),
+        ("material", DefaultParser),
+        ("resistances", ArrayParser),
+        ("scripts", ArrayParser),
+        ("sound_bank", DefaultParser),
+        ("category", DefaultParser),
+        ("base_34", PadByteParser),
+        ("base_35", PadByteParser),
+        *(("base_%d" % i, NullParser) for i in range(36, 64))
+    )
+
+    item_fields = (
+        ("item_flags", DefaultParser),
+        ("item_parent", ArrayParser),
+        ("item_weight", DefaultParser),
+        ("item_weight_magic_adj", DefaultParser),
+        ("item_worth", DefaultParser),
+        ("item_mana_store", DefaultParser),
+        ("item_inv_art", DefaultParser),
+        ("item_inv_location", DefaultParser),
+        ("item_use_art_fragment", DefaultParser),
+        ("item_magic_tech_complexity", DefaultParser),
+        ("item_discipline", DefaultParser),
+        ("item_description_unknown", DefaultParser),
+        ("item_description_effects", DefaultParser),
+        ("item_spell_1", DefaultParser),
+        ("item_spell_2", DefaultParser),
+        ("item_spell_3", DefaultParser),
+        ("item_spell_4", DefaultParser),
+        ("item_spell_5", DefaultParser),
+        ("item_spell_mana_store", DefaultParser),
+        ("item_ai_action", DefaultParser),
+        ("item_20", PadIntParser),
+        ("item_21", PadByteParser),
+        ("item_22", PadByteParser),
+        *(("item_%d" % i, NullParser) for i in range(23, 32))
+    )
+
+    critter_fields = (
+        ("critter_flags_1", DefaultParser),
+        ("critter_flags_2", DefaultParser),
+        ("critter_stats", ArrayParser),
+        ("critter_skills", ArrayParser),
+        ("critter_techs", ArrayParser),
+        ("critter_spells", ArrayParser),
+        ("critter_fatigue_points", DefaultParser),
+        ("critter_fatigue_adj", DefaultParser),
+        ("critter_fatigue_damage", DefaultParser),
+        ("critter_crit_hit", DefaultParser),
+        ("critter_effects", ArrayParser),
+        ("critter_effects_cause", ArrayParser),
+        ("critter_fleeing_from", ByteParser),
+        ("critter_portrait", DefaultParser),
+        ("critter_gold", ByteParser),
+        ("critter_arrows", ByteParser),
+        ("critter_bullets", ByteParser),
+        ("critter_power_cells", ByteParser),
+        ("critter_fuel", ByteParser),
+        ("critter_inv_num", DefaultParser),
+        ("critter_inv_list", ArrayParser),
+        ("critter_inv_source", DefaultParser),
+        ("critter_description_unknown", DefaultParser),
+        ("critter_followers", ArrayParser),
+        ("critter_teleport_destination", ByteParser),
+        ("critter_teleport_map", DefaultParser),
+        ("critter_death_time", DefaultParser),
+        ("critter_auto_level_scheme", DefaultParser),
+        ("critter_28", PadLongParser),
+        ("critter_29", PadIntParser),
+        ("critter_30", PadByteParser),
+        ("critter_31", PadByteParser),
     )
 
     wall_fields = (
         *base_fields,
-        ("_w0", default_field_parse),
-        ("_w1", default_field_parse),
-        ("_w2", default_field_parse),
-        ("_w3", default_field_parse),
-        ("_w4", default_field_parse),
-        ("_w5", default_field_parse),
-        ("_w6", default_field_parse),
-        ("_w7", default_field_parse),
-        ("_w8", default_field_parse),
-        ("_w9", default_field_parse),
-        ("_w10", default_field_parse),
-        ("_w11", default_field_parse),
-        ("_w12", default_field_parse),
-        ("_w13", default_field_parse),
-        ("_w14", default_field_parse),
-        ("_w15", default_field_parse),
-        ("_w16", default_field_parse),
-        ("_w17", default_field_parse),
-        ("_w18", default_field_parse),
-        ("_w19", default_field_parse),
-        ("_w20", default_field_parse),
-        ("_w21", default_field_parse),
-        ("_w22", default_field_parse),
-        ("_w23", default_field_parse),
-        ("_w24", default_field_parse),
-        ("_w25", default_field_parse),
-        ("_w26", default_field_parse),
-        ("_w27", default_field_parse),
-        ("_w28", default_field_parse),
-        ("_w29", default_field_parse),
-        ("_w30", default_field_parse),
-        ("_w31", default_field_parse)
+        ("wall_flags", DefaultParser),
+        ("wall_1", PadIntParser),
+        ("wall_2", PadByteParser),
+        ("wall_3", PadByteParser),
+        *(("wall_%d" % i, NullParser) for i in range(4, 32))
     )
 
     portal_fields = (
         *base_fields,
-        ("_p0", default_field_parse),
-        ("_p1", default_field_parse),
-        ("_p2", default_field_parse),
-        ("_p3", default_field_parse),
-        ("_p4", default_field_parse),
-        ("_p5", default_field_parse),
-        ("_p6", default_field_parse),
-        ("_p7", default_field_parse),
-        ("_p8", default_field_parse),
-        ("_p9", default_field_parse),
-        ("_p10", default_field_parse),
-        ("_p11", default_field_parse),
-        ("_p12", default_field_parse),
-        ("_p13", default_field_parse),
-        ("_p14", default_field_parse),
-        ("_p15", default_field_parse),
-        ("_p16", default_field_parse),
-        ("_p17", default_field_parse),
-        ("_p18", default_field_parse),
-        ("_p19", default_field_parse),
-        ("_p20", default_field_parse),
-        ("_p21", default_field_parse),
-        ("_p22", default_field_parse),
-        ("_p23", default_field_parse),
-        ("_p24", default_field_parse),
-        ("_p25", default_field_parse),
-        ("_p26", default_field_parse),
-        ("_p27", default_field_parse),
-        ("_p28", default_field_parse),
-        ("_p29", default_field_parse),
-        ("_p30", default_field_parse),
-        ("_p31", default_field_parse)
+        ("portal_flags", DefaultParser),
+        ("portal_lock_difficulty", DefaultParser),
+        ("portal_key_id", DefaultParser),
+        ("portal_notify_npc", DefaultParser),
+        ("portal_4", PadIntParser),
+        ("portal_5", PadIntParser),
+        ("portal_6", PadByteParser),
+        ("portal_7", PadByteParser),
+        *(("portal_%d" % i, NullParser) for i in range(8, 32))
     )
 
     container_fields = (
         *base_fields,
-        ("_c0", default_field_parse),
-        ("_c1", default_field_parse),
-        ("_c2", default_field_parse),
-        ("_c3", default_field_parse),
-        ("_c4", default_field_parse),
-        ("_c5", default_field_parse),
-        ("_c6", default_field_parse),
-        ("_c7", default_field_parse),
-        ("_c8", default_field_parse),
-        ("_c9", default_field_parse),
-        ("_c10", default_field_parse),
-        ("_c11", default_field_parse),
-        ("_c12", default_field_parse),
-        ("_c13", default_field_parse),
-        ("_c14", default_field_parse),
-        ("_c15", default_field_parse),
-        ("_c16", default_field_parse),
-        ("_c17", default_field_parse),
-        ("_c18", default_field_parse),
-        ("_c19", default_field_parse),
-        ("_c20", default_field_parse),
-        ("_c21", default_field_parse),
-        ("_c22", default_field_parse),
-        ("_c23", default_field_parse),
-        ("_c24", default_field_parse),
-        ("_c25", default_field_parse),
-        ("_c26", default_field_parse),
-        ("_c27", default_field_parse),
-        ("_c28", default_field_parse),
-        ("_c29", default_field_parse),
-        ("_c30", default_field_parse),
-        ("_c31", default_field_parse)
+        ("container_flags", DefaultParser),
+        ("container_lock_difficulty", DefaultParser),
+        ("container_key_id", DefaultParser),
+        ("container_inventory_num", DefaultParser),
+        ("container_inventory_list", ArrayParser),
+        ("container_notify_npc", DefaultParser),
+        ("container_6", PadIntParser),
+        ("container_7", PadIntParser),
+        ("container_8", PadByteParser),
+        ("container_9", PadByteParser),
+        *(("container_%d" % i, NullParser) for i in range(10, 32))
     )
 
     scenery_fields = (
         *base_fields,
-        ("_s0", default_field_parse),
-        ("_s1", default_field_parse),
-        ("_s2", default_field_parse),
-        ("_s3", default_field_parse),
-        ("_s4", default_field_parse),
-        ("_s5", default_field_parse),
-        ("_s6", default_field_parse),
-        ("_s7", default_field_parse),
-        ("_s8", default_field_parse),
-        ("_s9", default_field_parse),
-        ("_s10", default_field_parse),
-        ("_s11", default_field_parse),
-        ("_s12", default_field_parse),
-        ("_s13", default_field_parse),
-        ("_s14", default_field_parse),
-        ("_s15", default_field_parse),
-        ("_s16", default_field_parse),
-        ("_s17", default_field_parse),
-        ("_s18", default_field_parse),
-        ("_s19", default_field_parse),
-        ("_s20", default_field_parse),
-        ("_s21", default_field_parse),
-        ("_s22", default_field_parse),
-        ("_s23", default_field_parse),
-        ("_s24", default_field_parse),
-        ("_s25", default_field_parse),
-        ("_s26", default_field_parse),
-        ("_s27", default_field_parse),
-        ("_s28", default_field_parse),
-        ("_s29", default_field_parse),
-        ("_s30", default_field_parse),
-        ("_s31", default_field_parse)
+        ("scenery_flags", DefaultParser),
+        ("scenery_whois_in_me", ArrayParser),
+        ("scenery_respawn_delay", DefaultParser),
+        ("scenery_3", PadIntParser),
+        ("scenery_4", PadByteParser),
+        ("scenery_5", PadByteParser),
+        *(("scenery_%d" % i, NullParser) for i in range(6, 32))
     )
 
-    projectile_fields = ()
+    projectile_fields = (
+        *base_fields,
+        ("projectile_flags", DefaultParser),
+        ("projectile_combat_damage", DefaultParser),
+        ("projectile_hit_location", ArrayParser),
+        ("projectile_parent_weapon", DefaultParser),
+        ("projectile_4", PadIntParser),
+        ("projectile_5", PadIntParser),
+        ("projectile_6", PadByteParser),
+        ("projectile_7", PadByteParser),
+        *(("projectile_%d" % i, NullParser) for i in range(8, 32))
+    )
 
     weapon_fields = (
         *base_fields,
-        ("_W0", default_field_parse),
-        ("_W1", default_field_parse),
-        ("_W2", default_field_parse),
-        ("_W3", default_field_parse),
-        ("_W4", default_field_parse),
-        ("_W5", default_field_parse),
-        ("_W6", default_field_parse),
-        ("_W7", default_field_parse),
-        ("_W8", default_field_parse),
-        ("_W9", default_field_parse),
-        ("_W10", default_field_parse),
-        ("_W11", default_field_parse),
-        ("_W12", default_field_parse),
-        ("_W13", default_field_parse),
-        ("_W14", default_field_parse),
-        ("_W15", default_field_parse),
-        ("_W16", default_field_parse),
-        ("_W17", default_field_parse),
-        ("_W18", default_field_parse),
-        ("_W19", default_field_parse),
-        ("_W20", default_field_parse),
-        ("_W21", default_field_parse),
-        ("_W22", default_field_parse),
-        ("_W23", default_field_parse),
-        ("_W24", default_field_parse),
-        ("_W25", default_field_parse),
-        ("_W26", default_field_parse),
-        ("_W27", default_field_parse),
-        ("_W28", default_field_parse),
-        ("_W29", default_field_parse),
-        ("_W30", default_field_parse),
-        ("_W31", default_field_parse),
-        ("_W32", default_field_parse),
-        ("_W33", default_field_parse),
-        ("_W34", default_field_parse),
-        ("_W35", default_field_parse),
-        ("_W36", default_field_parse),
-        ("_W37", default_field_parse),
-        ("_W38", default_field_parse),
-        ("_W39", default_field_parse),
-        ("_W40", default_field_parse),
-        ("_W41", default_field_parse),
-        ("_W42", default_field_parse),
-        ("_W43", default_field_parse),
-        ("_W44", default_field_parse),
-        ("_W45", default_field_parse),
-        ("_W46", default_field_parse),
-        ("_W47", default_field_parse),
-        ("_W48", default_field_parse),
-        ("_W49", default_field_parse),
-        ("_W50", default_field_parse),
-        ("_W51", default_field_parse),
-        ("_W52", default_field_parse),
-        ("_W53", default_field_parse),
-        ("_W54", default_field_parse),
-        ("_W55", default_field_parse),
-        ("_W56", default_field_parse),
-        ("_W57", default_field_parse),
-        ("_W58", default_field_parse),
-        ("_W59", default_field_parse),
-        ("_W60", default_field_parse),
-        ("_W61", default_field_parse),
-        ("_W62", default_field_parse),
-        ("_W63", default_field_parse)
+        *item_fields,
+        ("weapon_flags", DefaultParser),
+        ("weapon_paper_doll_art", DefaultParser),
+        ("weapon_hit", DefaultParser),
+        ("weapon_hit_magic_adj", DefaultParser),
+        ("weapon_damage_lower", ArrayParser),
+        ("weapon_damage_upper", ArrayParser),
+        ("weapon_damage_magic_adj", ArrayParser),
+        ("waepon_speed", DefaultParser),
+        ("weapon_speed_magic_adj", DefaultParser),
+        ("weapon_range", DefaultParser),
+        ("weapon_range_magic_adj", DefaultParser),
+        ("weapon_min_strength", DefaultParser),
+        ("weapon_min_strength_magic_adj", DefaultParser),
+        ("weapon_ammo_type", DefaultParser),
+        ("weapon_ammo_consumption", DefaultParser),
+        ("weapon_missile_art", DefaultParser),
+        ("weapon_visual_effect_art", DefaultParser),
+        ("weapon_crit_hit", DefaultParser),
+        ("weapon_crit_hit_magic_chance", DefaultParser),
+        ("weapon_crit_hit_magic_effect", DefaultParser),
+        ("weapon_crit_miss", DefaultParser),
+        ("weapon_crit_miss_magic_chance", DefaultParser),
+        ("weapon_crit_miss_magic_effect", DefaultParser),
+        ("weapon_23", PadIntParser),
+        ("weapon_24", PadIntParser),
+        ("weapon_25", PadByteParser),
+        ("weapon_26", PadByteParser),
+        *(("weapon_%d" % i, NullParser) for i in range(27, 32))
     )
 
     ammo_fields = (
         *base_fields,
-        ("_a0", default_field_parse),
-        ("_a1", default_field_parse),
-        ("_a2", default_field_parse),
-        ("_a3", default_field_parse),
-        ("_a4", default_field_parse),
-        ("_a5", default_field_parse),
-        ("_a6", default_field_parse),
-        ("_a7", default_field_parse),
-        ("_a8", default_field_parse),
-        ("_a9", default_field_parse),
-        ("_a10", default_field_parse),
-        ("_a11", default_field_parse),
-        ("_a12", default_field_parse),
-        ("_a13", default_field_parse),
-        ("_a14", default_field_parse),
-        ("_a15", default_field_parse),
-        ("_a16", default_field_parse),
-        ("_a17", default_field_parse),
-        ("_a18", default_field_parse),
-        ("_a19", default_field_parse),
-        ("_a20", default_field_parse),
-        ("_a21", default_field_parse),
-        ("_a22", default_field_parse),
-        ("_a23", default_field_parse),
-        ("_a24", default_field_parse),
-        ("_a25", default_field_parse),
-        ("_a26", default_field_parse),
-        ("_a27", default_field_parse),
-        ("_a28", default_field_parse),
-        ("_a29", default_field_parse),
-        ("_a30", default_field_parse),
-        ("_a31", default_field_parse),
-        ("_a32", default_field_parse),
-        ("_a33", default_field_parse),
-        ("_a34", default_field_parse),
-        ("_a35", default_field_parse),
-        ("_a36", default_field_parse),
-        ("_a37", default_field_parse),
-        ("_a38", default_field_parse),
-        ("_a39", default_field_parse),
-        ("_a40", default_field_parse),
-        ("_a41", default_field_parse),
-        ("_a42", default_field_parse),
-        ("_a43", default_field_parse),
-        ("_a44", default_field_parse),
-        ("_a45", default_field_parse),
-        ("_a46", default_field_parse),
-        ("_a47", default_field_parse),
-        ("_a48", default_field_parse),
-        ("_a49", default_field_parse),
-        ("_a50", default_field_parse),
-        ("_a51", default_field_parse),
-        ("_a52", default_field_parse),
-        ("_a53", default_field_parse),
-        ("_a54", default_field_parse),
-        ("_a55", default_field_parse),
-        ("_a56", default_field_parse),
-        ("_a57", default_field_parse),
-        ("_a58", default_field_parse),
-        ("_a59", default_field_parse),
-        ("_a60", default_field_parse),
-        ("_a61", default_field_parse),
-        ("_a62", default_field_parse),
-        ("_a63", default_field_parse)
+        *item_fields,
+        ("ammo_flags", DefaultParser),
+        ("ammo_quantity", DefaultParser),
+        ("ammo_type", DefaultParser),
+        ("ammo_3", PadIntParser),
+        ("ammo_4", PadIntParser),
+        ("ammo_5", PadByteParser),
+        ("ammo_6", PadByteParser),
+        *(("ammo_%d" % i, NullParser) for i in range(7, 32))
     )
 
     armor_fields = (
         *base_fields,
-        ("_A0", default_field_parse),
-        ("_A1", default_field_parse),
-        ("_A2", default_field_parse),
-        ("_A3", default_field_parse),
-        ("_A4", default_field_parse),
-        ("_A5", default_field_parse),
-        ("_A6", default_field_parse),
-        ("_A7", default_field_parse),
-        ("_A8", default_field_parse),
-        ("_A9", default_field_parse),
-        ("_A10", default_field_parse),
-        ("_A11", default_field_parse),
-        ("_A12", default_field_parse),
-        ("_A13", default_field_parse),
-        ("_A14", default_field_parse),
-        ("_A15", default_field_parse),
-        ("_A16", default_field_parse),
-        ("_A17", default_field_parse),
-        ("_A18", default_field_parse),
-        ("_A19", default_field_parse),
-        ("_A20", default_field_parse),
-        ("_A21", default_field_parse),
-        ("_A22", default_field_parse),
-        ("_A23", default_field_parse),
-        ("_A24", default_field_parse),
-        ("_A25", default_field_parse),
-        ("_A26", default_field_parse),
-        ("_A27", default_field_parse),
-        ("_A28", default_field_parse),
-        ("_A29", default_field_parse),
-        ("_A30", default_field_parse),
-        ("_A31", default_field_parse),
-        ("_A32", default_field_parse),
-        ("_A33", default_field_parse),
-        ("_A34", default_field_parse),
-        ("_A35", default_field_parse),
-        ("_A36", default_field_parse),
-        ("_A37", default_field_parse),
-        ("_A38", default_field_parse),
-        ("_A39", default_field_parse),
-        ("_A40", default_field_parse),
-        ("_A41", default_field_parse),
-        ("_A42", default_field_parse),
-        ("_A43", default_field_parse),
-        ("_A44", default_field_parse),
-        ("_A45", default_field_parse),
-        ("_A46", default_field_parse),
-        ("_A47", default_field_parse),
-        ("_A48", default_field_parse),
-        ("_A49", default_field_parse),
-        ("_A50", default_field_parse),
-        ("_A51", default_field_parse),
-        ("_A52", default_field_parse),
-        ("_A53", default_field_parse),
-        ("_A54", default_field_parse),
-        ("_A55", default_field_parse),
-        ("_A56", default_field_parse),
-        ("_A57", default_field_parse),
-        ("_A58", default_field_parse),
-        ("_A59", default_field_parse),
-        ("_A60", default_field_parse),
-        ("_A61", default_field_parse),
-        ("_A62", default_field_parse),
-        ("_A63", default_field_parse)
+        *item_fields,
+        ("armor_flags", DefaultParser),
+        ("armor_paper_doll_art", DefaultParser),
+        ("armor_ac_adj", DefaultParser),
+        ("armor_ac_madj", DefaultParser),
+        ("armor_resistances", ArrayParser),
+        ("armor_resistances_madj", ArrayParser),
+        ("armor_silent_move_adj", DefaultParser),
+        ("armor_silent_move_madj", DefaultParser),
+        ("armor_unarmed_damage", DefaultParser),
+        ("armor_9", PadIntParser),
+        ("armor_10", PadByteParser),
+        ("armor_11", PadByteParser),
+        *(("armor_%d" % i, NullParser) for i in range(12, 32))
     )
 
 
     gold_fields = (
         *base_fields,
-        ("_g0", default_field_parse),
-        ("_g1", default_field_parse),
-        ("_g2", default_field_parse),
-        ("_g3", default_field_parse),
-        ("_g4", default_field_parse),
-        ("_g5", default_field_parse),
-        ("_g6", default_field_parse),
-        ("_g7", default_field_parse),
-        ("_g8", default_field_parse),
-        ("_g9", default_field_parse),
-        ("_g10", default_field_parse),
-        ("_g11", default_field_parse),
-        ("_g12", default_field_parse),
-        ("_g13", default_field_parse),
-        ("_g14", default_field_parse),
-        ("_g15", default_field_parse),
-        ("_g16", default_field_parse),
-        ("_g17", default_field_parse),
-        ("_g18", default_field_parse),
-        ("_g19", default_field_parse),
-        ("_g20", default_field_parse),
-        ("_g21", default_field_parse),
-        ("_g22", default_field_parse),
-        ("_g23", default_field_parse),
-        ("_g24", default_field_parse),
-        ("_g25", default_field_parse),
-        ("_g26", default_field_parse),
-        ("_g27", default_field_parse),
-        ("_g28", default_field_parse),
-        ("_g29", default_field_parse),
-        ("_g30", default_field_parse),
-        ("_g31", default_field_parse),
-        ("_g32", default_field_parse),
-        ("_g33", default_field_parse),
-        ("_g34", default_field_parse),
-        ("_g35", default_field_parse),
-        ("_g36", default_field_parse),
-        ("_g37", default_field_parse),
-        ("_g38", default_field_parse),
-        ("_g39", default_field_parse),
-        ("_g40", default_field_parse),
-        ("_g41", default_field_parse),
-        ("_g42", default_field_parse),
-        ("_g43", default_field_parse),
-        ("_g44", default_field_parse),
-        ("_g45", default_field_parse),
-        ("_g46", default_field_parse),
-        ("_g47", default_field_parse),
-        ("_g48", default_field_parse),
-        ("_g49", default_field_parse),
-        ("_g50", default_field_parse),
-        ("_g51", default_field_parse),
-        ("_g52", default_field_parse),
-        ("_g53", default_field_parse),
-        ("_g54", default_field_parse),
-        ("_g55", default_field_parse),
-        ("_g56", default_field_parse),
-        ("_g57", default_field_parse),
-        ("_g58", default_field_parse),
-        ("_g59", default_field_parse),
-        ("_g60", default_field_parse),
-        ("_g61", default_field_parse),
-        ("_g62", default_field_parse),
-        ("_g63", default_field_parse)
+        *item_fields,
+        ("gold_flags", DefaultParser),
+        ("gold_quantity", DefaultParser),
+        ("gold_2", PadIntParser),
+        ("gold_3", PadIntParser),
+        ("gold_4", PadByteParser),
+        ("gold_5", PadByteParser),
+        *(("gold_%d" % i, NullParser) for i in range(6, 32))
     )
 
     food_fields = (
         *base_fields,
-        ("_f0", default_field_parse),
-        ("_f1", default_field_parse),
-        ("_f2", default_field_parse),
-        ("_f3", default_field_parse),
-        ("_f4", default_field_parse),
-        ("_f5", default_field_parse),
-        ("_f6", default_field_parse),
-        ("_f7", default_field_parse),
-        ("_f8", default_field_parse),
-        ("_f9", default_field_parse),
-        ("_f10", default_field_parse),
-        ("_f11", default_field_parse),
-        ("_f12", default_field_parse),
-        ("_f13", default_field_parse),
-        ("_f14", default_field_parse),
-        ("_f15", default_field_parse),
-        ("_f16", default_field_parse),
-        ("_f17", default_field_parse),
-        ("_f18", default_field_parse),
-        ("_f19", default_field_parse),
-        ("_f20", default_field_parse),
-        ("_f21", default_field_parse),
-        ("_f22", default_field_parse),
-        ("_f23", default_field_parse),
-        ("_f24", default_field_parse),
-        ("_f25", default_field_parse),
-        ("_f26", default_field_parse),
-        ("_f27", default_field_parse),
-        ("_f28", default_field_parse),
-        ("_f29", default_field_parse),
-        ("_f30", default_field_parse),
-        ("_f31", default_field_parse),
-        ("_f32", default_field_parse),
-        ("_f33", default_field_parse),
-        ("_f34", default_field_parse),
-        ("_f35", default_field_parse),
-        ("_f36", default_field_parse),
-        ("_f37", default_field_parse),
-        ("_f38", default_field_parse),
-        ("_f39", default_field_parse),
-        ("_f40", default_field_parse),
-        ("_f41", default_field_parse),
-        ("_f42", default_field_parse),
-        ("_f43", default_field_parse),
-        ("_f44", default_field_parse),
-        ("_f45", default_field_parse),
-        ("_f46", default_field_parse),
-        ("_f47", default_field_parse),
-        ("_f48", default_field_parse),
-        ("_f49", default_field_parse),
-        ("_f50", default_field_parse),
-        ("_f51", default_field_parse),
-        ("_f52", default_field_parse),
-        ("_f53", default_field_parse),
-        ("_f54", default_field_parse),
-        ("_f55", default_field_parse),
-        ("_f56", default_field_parse),
-        ("_f57", default_field_parse),
-        ("_f58", default_field_parse),
-        ("_f59", default_field_parse),
-        ("_f60", default_field_parse),
-        ("_f61", default_field_parse),
-        ("_f62", default_field_parse),
-        ("_f63", default_field_parse)
+        *item_fields,
+        ("food_flags", DefaultParser),
+        ("food_1", PadIntParser),
+        ("food_2", PadIntParser),
+        ("food_3", PadByteParser),
+        ("food_4", PadByteParser),
+        *(("food_%d" % i, NullParser) for i in range(5, 32))
     )
 
     scroll_fields = (
         *base_fields,
-        ("_S0", default_field_parse),
-        ("_S1", default_field_parse),
-        ("_S2", default_field_parse),
-        ("_S3", default_field_parse),
-        ("_S4", default_field_parse),
-        ("_S5", default_field_parse),
-        ("_S6", default_field_parse),
-        ("_S7", default_field_parse),
-        ("_S8", default_field_parse),
-        ("_S9", default_field_parse),
-        ("_S10", default_field_parse),
-        ("_S11", default_field_parse),
-        ("_S12", default_field_parse),
-        ("_S13", default_field_parse),
-        ("_S14", default_field_parse),
-        ("_S15", default_field_parse),
-        ("_S16", default_field_parse),
-        ("_S17", default_field_parse),
-        ("_S18", default_field_parse),
-        ("_S19", default_field_parse),
-        ("_S20", default_field_parse),
-        ("_S21", default_field_parse),
-        ("_S22", default_field_parse),
-        ("_S23", default_field_parse),
-        ("_S24", default_field_parse),
-        ("_S25", default_field_parse),
-        ("_S26", default_field_parse),
-        ("_S27", default_field_parse),
-        ("_S28", default_field_parse),
-        ("_S29", default_field_parse),
-        ("_S30", default_field_parse),
-        ("_S31", default_field_parse),
-        ("_S32", default_field_parse),
-        ("_S33", default_field_parse),
-        ("_S34", default_field_parse),
-        ("_S35", default_field_parse),
-        ("_S36", default_field_parse),
-        ("_S37", default_field_parse),
-        ("_S38", default_field_parse),
-        ("_S39", default_field_parse),
-        ("_S40", default_field_parse),
-        ("_S41", default_field_parse),
-        ("_S42", default_field_parse),
-        ("_S43", default_field_parse),
-        ("_S44", default_field_parse),
-        ("_S45", default_field_parse),
-        ("_S46", default_field_parse),
-        ("_S47", default_field_parse),
-        ("_S48", default_field_parse),
-        ("_S49", default_field_parse),
-        ("_S50", default_field_parse),
-        ("_S51", default_field_parse),
-        ("_S52", default_field_parse),
-        ("_S53", default_field_parse),
-        ("_S54", default_field_parse),
-        ("_S55", default_field_parse),
-        ("_S56", default_field_parse),
-        ("_S57", default_field_parse),
-        ("_S58", default_field_parse),
-        ("_S59", default_field_parse),
-        ("_S60", default_field_parse),
-        ("_S61", default_field_parse),
-        ("_S62", default_field_parse),
-        ("_S63", default_field_parse)
+        *item_fields,
+        ("scroll_flags", DefaultParser),
+        ("scroll_1", PadIntParser),
+        ("scroll_2", PadIntParser),
+        ("scroll_3", PadByteParser),
+        ("scroll_4", PadByteParser),
+        *(("scroll_%d" % i, NullParser) for i in range(5, 32))
     )
 
     key_fields = (
         *base_fields,
-        ("_k0", default_field_parse),
-        ("_k1", default_field_parse),
-        ("_k2", default_field_parse),
-        ("_k3", default_field_parse),
-        ("_k4", default_field_parse),
-        ("_k5", default_field_parse),
-        ("_k6", default_field_parse),
-        ("_k7", default_field_parse),
-        ("_k8", default_field_parse),
-        ("_k9", default_field_parse),
-        ("_k10", default_field_parse),
-        ("_k11", default_field_parse),
-        ("_k12", default_field_parse),
-        ("_k13", default_field_parse),
-        ("_k14", default_field_parse),
-        ("_k15", default_field_parse),
-        ("_k16", default_field_parse),
-        ("_k17", default_field_parse),
-        ("_k18", default_field_parse),
-        ("_k19", default_field_parse),
-        ("_k20", default_field_parse),
-        ("_k21", default_field_parse),
-        ("_k22", default_field_parse),
-        ("_k23", default_field_parse),
-        ("_k24", default_field_parse),
-        ("_k25", default_field_parse),
-        ("_k26", default_field_parse),
-        ("_k27", default_field_parse),
-        ("_k28", default_field_parse),
-        ("_k29", default_field_parse),
-        ("_k30", default_field_parse),
-        ("_k31", default_field_parse),
-        ("_k32", default_field_parse),
-        ("_k33", default_field_parse),
-        ("_k34", default_field_parse),
-        ("_k35", default_field_parse),
-        ("_k36", default_field_parse),
-        ("_k37", default_field_parse),
-        ("_k38", default_field_parse),
-        ("_k39", default_field_parse),
-        ("_k40", default_field_parse),
-        ("_k41", default_field_parse),
-        ("_k42", default_field_parse),
-        ("_k43", default_field_parse),
-        ("_k44", default_field_parse),
-        ("_k45", default_field_parse),
-        ("_k46", default_field_parse),
-        ("_k47", default_field_parse),
-        ("_k48", default_field_parse),
-        ("_k49", default_field_parse),
-        ("_k50", default_field_parse),
-        ("_k51", default_field_parse),
-        ("_k52", default_field_parse),
-        ("_k53", default_field_parse),
-        ("_k54", default_field_parse),
-        ("_k55", default_field_parse),
-        ("_k56", default_field_parse),
-        ("_k57", default_field_parse),
-        ("_k58", default_field_parse),
-        ("_k59", default_field_parse),
-        ("_k60", default_field_parse),
-        ("_k61", default_field_parse),
-        ("_k62", default_field_parse),
-        ("_k63", default_field_parse)
+        *item_fields,
+        ("key_id", DefaultParser),
+        ("key_1", PadIntParser),
+        ("key_2", PadIntParser),
+        ("key_3", PadByteParser),
+        ("key_4", PadByteParser),
+        *(("key_%d" % i, NullParser) for i in range(5, 32))
     )
 
-    keyring_fields = (
+    key_ring_fields = (
         *base_fields,
-        ("_K0", default_field_parse),
-        ("_K1", default_field_parse),
-        ("_K2", default_field_parse),
-        ("_K3", default_field_parse),
-        ("_K4", default_field_parse),
-        ("_K5", default_field_parse),
-        ("_K6", default_field_parse),
-        ("_K7", default_field_parse),
-        ("_K8", default_field_parse),
-        ("_K9", default_field_parse),
-        ("_K10", default_field_parse),
-        ("_K11", default_field_parse),
-        ("_K12", default_field_parse),
-        ("_K13", default_field_parse),
-        ("_K14", default_field_parse),
-        ("_K15", default_field_parse),
-        ("_K16", default_field_parse),
-        ("_K17", default_field_parse),
-        ("_K18", default_field_parse),
-        ("_K19", default_field_parse),
-        ("_K20", default_field_parse),
-        ("_K21", default_field_parse),
-        ("_K22", default_field_parse),
-        ("_K23", default_field_parse),
-        ("_K24", default_field_parse),
-        ("_K25", default_field_parse),
-        ("_K26", default_field_parse),
-        ("_K27", default_field_parse),
-        ("_K28", default_field_parse),
-        ("_K29", default_field_parse),
-        ("_K30", default_field_parse),
-        ("_K31", default_field_parse),
-        ("_K32", default_field_parse),
-        ("_K33", default_field_parse),
-        ("_K34", default_field_parse),
-        ("_K35", default_field_parse),
-        ("_K36", default_field_parse),
-        ("_K37", default_field_parse),
-        ("_K38", default_field_parse),
-        ("_K39", default_field_parse),
-        ("_K40", default_field_parse),
-        ("_K41", default_field_parse),
-        ("_K42", default_field_parse),
-        ("_K43", default_field_parse),
-        ("_K44", default_field_parse),
-        ("_K45", default_field_parse),
-        ("_K46", default_field_parse),
-        ("_K47", default_field_parse),
-        ("_K48", default_field_parse),
-        ("_K49", default_field_parse),
-        ("_K50", default_field_parse),
-        ("_K51", default_field_parse),
-        ("_K52", default_field_parse),
-        ("_K53", default_field_parse),
-        ("_K54", default_field_parse),
-        ("_K55", default_field_parse),
-        ("_K56", default_field_parse),
-        ("_K57", default_field_parse),
-        ("_K58", default_field_parse),
-        ("_K59", default_field_parse),
-        ("_K60", default_field_parse),
-        ("_K61", default_field_parse),
-        ("_K62", default_field_parse),
-        ("_K63", default_field_parse)
+        *item_fields,
+        ("key_ring_flags", DefaultParser),
+        ("key_ring_list", ArrayParser),
+        ("key_ring_2", PadIntParser),
+        ("key_ring_3", PadIntParser),
+        ("key_ring_4", PadByteParser),
+        ("key_ring_5", PadByteParser),
+        *(("key_ring_%d" % i, NullParser) for i in range(6, 32))
     )
 
     written_fields = (
         *base_fields,
-        ("_q0", default_field_parse),
-        ("_q1", default_field_parse),
-        ("_q2", default_field_parse),
-        ("_q3", default_field_parse),
-        ("_q4", default_field_parse),
-        ("_q5", default_field_parse),
-        ("_q6", default_field_parse),
-        ("_q7", default_field_parse),
-        ("_q8", default_field_parse),
-        ("_q9", default_field_parse),
-        ("_q10", default_field_parse),
-        ("_q11", default_field_parse),
-        ("_q12", default_field_parse),
-        ("_q13", default_field_parse),
-        ("_q14", default_field_parse),
-        ("_q15", default_field_parse),
-        ("_q16", default_field_parse),
-        ("_q17", default_field_parse),
-        ("_q18", default_field_parse),
-        ("_q19", default_field_parse),
-        ("_q20", default_field_parse),
-        ("_q21", default_field_parse),
-        ("_q22", default_field_parse),
-        ("_q23", default_field_parse),
-        ("_q24", default_field_parse),
-        ("_q25", default_field_parse),
-        ("_q26", default_field_parse),
-        ("_q27", default_field_parse),
-        ("_q28", default_field_parse),
-        ("_q29", default_field_parse),
-        ("_q30", default_field_parse),
-        ("_q31", default_field_parse),
-        ("_q32", default_field_parse),
-        ("_q33", default_field_parse),
-        ("_q34", default_field_parse),
-        ("_q35", default_field_parse),
-        ("_q36", default_field_parse),
-        ("_q37", default_field_parse),
-        ("_q38", default_field_parse),
-        ("_q39", default_field_parse),
-        ("_q40", default_field_parse),
-        ("_q41", default_field_parse),
-        ("_q42", default_field_parse),
-        ("_q43", default_field_parse),
-        ("_q44", default_field_parse),
-        ("_q45", default_field_parse),
-        ("_q46", default_field_parse),
-        ("_q47", default_field_parse),
-        ("_q48", default_field_parse),
-        ("_q49", default_field_parse),
-        ("_q50", default_field_parse),
-        ("_q51", default_field_parse),
-        ("_q52", default_field_parse),
-        ("_q53", default_field_parse),
-        ("_q54", default_field_parse),
-        ("_q55", default_field_parse),
-        ("_q56", default_field_parse),
-        ("_q57", default_field_parse),
-        ("_q58", default_field_parse),
-        ("_q59", default_field_parse),
-        ("_q60", default_field_parse),
-        ("_q61", default_field_parse),
-        ("_q62", default_field_parse),
-        ("_q63", default_field_parse)
+        *item_fields,
+        ("written_flags", DefaultParser),
+        ("written_type", DefaultParser),
+        ("written_subtype", DefaultParser),
+        ("written_text_end_line", DefaultParser),
+        ("written_4", PadIntParser),
+        ("written_5", PadIntParser),
+        ("written_6", PadByteParser),
+        ("written_7", PadByteParser),
+        *(("written_%d" % i, NullParser) for i in range(8, 32))
     )
 
     generic_fields = (
         *base_fields,
-        ("generic_flags", default_field_parse),
-        ("_G1", default_field_parse),
-        ("weight", default_field_parse),
-        ("magic_weight_adjustment", default_field_parse),
-        ("worth", default_field_parse),
-        ("mana_store", default_field_parse),
-        ("_G6", default_field_parse),
-        ("_G7", default_field_parse),
-        ("art_4", default_field_parse),
-        ("magic_tech_complexity", default_field_parse),
-        ("_G10", default_field_parse),
-        ("unknown_name", default_field_parse),
-        ("effect_description", default_field_parse),
-        ("spell_1", default_field_parse),
-        ("spell_2", default_field_parse),
-        ("spell_3", default_field_parse),
-        ("spell_4", default_field_parse),
-        ("spell_5", default_field_parse),
-        ("spell_mana_store", default_field_parse),
-        ("_G19", default_field_parse),
-        ("_G20", default_field_parse),
-        ("_G21", default_field_parse),
-        ("_G22", default_field_parse),
-        ("_G23", default_field_parse),
-        ("_G24", default_field_parse),
-        ("_G25", default_field_parse),
-        ("_G26", default_field_parse),
-        ("_G27", default_field_parse),
-        ("_G28", default_field_parse),
-        ("_G29", default_field_parse),
-        ("_G30", default_field_parse),
-        ("_G31", default_field_parse),
-        ("_G32", default_field_parse),
-        ("_G33", default_field_parse),
-        ("_G34", default_field_parse),
-        ("_G35", default_field_parse),
-        ("_G36", default_field_parse),
-        ("_G37", default_field_parse),
-        ("_G38", default_field_parse),
-        ("_G39", default_field_parse),
-        ("_G40", default_field_parse),
-        ("_G41", default_field_parse),
-        ("_G42", default_field_parse),
-        ("_G43", default_field_parse),
-        ("_G44", default_field_parse),
-        ("_G45", default_field_parse),
-        ("_G46", default_field_parse),
-        ("_G47", default_field_parse),
-        ("_G48", default_field_parse),
-        ("_G49", default_field_parse),
-        ("_G50", default_field_parse),
-        ("_G51", default_field_parse),
-        ("_G52", default_field_parse),
-        ("_G53", default_field_parse),
-        ("_G54", default_field_parse),
-        ("_G55", default_field_parse),
-        ("_G56", default_field_parse),
-        ("_G57", default_field_parse),
-        ("_G58", default_field_parse),
-        ("_G59", default_field_parse),
-        ("_G60", default_field_parse),
-        ("_G61", default_field_parse),
-        ("_G62", default_field_parse),
-        ("_G63", default_field_parse)
+        *item_fields,
+        ("generic_flags", DefaultParser),
+        ("generic_bonus", DefaultParser),
+        ("generic_count", DefaultParser),
+        ("generic_3", PadByteParser),
+        ("generic_4", PadByteParser),
+        *(("generic_%d" % i, NullParser) for i in range(5, 32))
     )
 
     player_fields = (
         *base_fields,
-        ("_P0", default_field_parse),
-        ("_P1", default_field_parse),
-        ("_P2", default_field_parse),
-        ("_P3", default_field_parse),
-        ("_P4", default_field_parse),
-        ("_P5", default_field_parse),
-        ("_P6", default_field_parse),
-        ("_P7", default_field_parse),
-        ("_P8", default_field_parse),
-        ("_P9", default_field_parse),
-        ("_P10", default_field_parse),
-        ("_P11", default_field_parse),
-        ("_P12", default_field_parse),
-        ("_P13", default_field_parse),
-        ("_P14", default_field_parse),
-        ("_P15", default_field_parse),
-        ("_P16", default_field_parse),
-        ("_P17", default_field_parse),
-        ("_P18", default_field_parse),
-        ("_P19", default_field_parse),
-        ("_P20", default_field_parse),
-        ("_P21", default_field_parse),
-        ("_P22", default_field_parse),
-        ("_P23", default_field_parse),
-        ("_P24", default_field_parse),
-        ("_P25", default_field_parse),
-        ("_P26", default_field_parse),
-        ("_P27", default_field_parse),
-        ("_P28", default_field_parse),
-        ("_P29", default_field_parse),
-        ("_P30", default_field_parse),
-        ("_P31", default_field_parse),
-        ("_P32", default_field_parse),
-        ("_P33", default_field_parse),
-        ("_P34", default_field_parse),
-        ("_P35", default_field_parse),
-        ("_P36", default_field_parse),
-        ("_P37", default_field_parse),
-        ("_P38", default_field_parse),
-        ("_P39", default_field_parse),
-        ("_P40", default_field_parse),
-        ("_P41", default_field_parse),
-        ("_P42", default_field_parse),
-        ("_P43", default_field_parse),
-        ("_P44", default_field_parse),
-        ("_P45", default_field_parse),
-        ("_P46", default_field_parse),
-        ("_P47", default_field_parse),
-        ("_P48", default_field_parse),
-        ("_P49", default_field_parse),
-        ("_P50", default_field_parse),
-        ("_P51", default_field_parse),
-        ("_P52", default_field_parse),
-        ("_P53", default_field_parse),
-        ("_P54", default_field_parse),
-        ("_P55", default_field_parse),
-        ("_P56", default_field_parse),
-        ("_P57", default_field_parse),
-        ("_P58", default_field_parse),
-        ("_P59", default_field_parse),
-        ("_P60", default_field_parse),
-        ("_P61", default_field_parse),
-        ("_P62", default_field_parse),
-        ("_P63", default_field_parse),
-        ("_P64", default_field_parse),
-        ("_P65", default_field_parse),
-        ("_P66", default_field_parse),
-        ("_P67", default_field_parse),
-        ("_P68", default_field_parse),
-        ("_P69", default_field_parse),
-        ("_P70", default_field_parse),
-        ("_P71", default_field_parse),
-        ("_P72", default_field_parse),
-        ("_P73", default_field_parse),
-        ("_P74", default_field_parse),
-        ("_P75", default_field_parse),
-        ("_P76", default_field_parse),
-        ("_P77", default_field_parse),
-        ("_P78", default_field_parse),
-        ("_P79", default_field_parse),
-        ("_P80", default_field_parse),
-        ("_P81", default_field_parse),
-        ("_P82", default_field_parse),
-        ("_P83", default_field_parse),
-        ("_P84", default_field_parse),
-        ("_P85", default_field_parse),
-        ("_P86", default_field_parse),
-        ("_P87", default_field_parse),
-        ("_P88", default_field_parse),
-        ("_P89", default_field_parse),
-        ("_P90", default_field_parse),
-        ("_P91", default_field_parse),
-        ("_P92", default_field_parse),
-        ("_P93", default_field_parse),
-        ("_P94", default_field_parse),
-        ("_P95", default_field_parse),
+        *critter_fields,
+        ("player_flags", DefaultParser),
+        ("player_flags_fate", DefaultParser),
+        ("player_reputations", ArrayParser),
+        ("player_reputations_ts", ArrayParser),
+        ("player_background", DefaultParser),
+        ("player_background_text", DefaultParser),
+        ("player_quests", ArrayParser),
+        ("player_blessings", ArrayParser),
+        ("player_blessings_ts", ArrayParser),
+        ("player_curses", ArrayParser),
+        ("player_curses_ts", ArrayParser),
+        ("player_party_id", DefaultParser),
+        ("player_rumors", ArrayParser),
+        ("player_13", ArrayParser),
+        ("player_schematics", ArrayParser),
+        ("player_logbook_ego", ArrayParser),
+        ("player_fog_mask", DefaultParser),
+        ("player_name", StringParser),
+        ("player_bank_money", DefaultParser),
+        ("player_global_flags", ArrayParser),
+        ("player_global_vars", ArrayParser),
+        ("player_21", PadIntParser),
+        ("player_22", PadIntParser),
+        ("player_23", PadByteParser),
+        ("player_24", PadByteParser),
+        *(("player_%d" % i, NullParser) for i in range(25, 64))
     )
 
-    critter_fields = (
+    npc_fields = (
         *base_fields,
-        ("_C0", default_field_parse),
-        ("_C1", default_field_parse),
-        ("_C2", default_field_parse),
-        ("_C3", default_field_parse),
-        ("_C4", default_field_parse),
-        ("_C5", default_field_parse),
-        ("_C6", default_field_parse),
-        ("_C7", default_field_parse),
-        ("_C8", default_field_parse),
-        ("_C9", default_field_parse),
-        ("_C10", default_field_parse),
-        ("_C11", default_field_parse),
-        ("_C12", default_field_parse),
-        ("_C13", default_field_parse),
-        ("_C14", default_field_parse),
-        ("_C15", default_field_parse),
-        ("_C16", default_field_parse),
-        ("_C17", default_field_parse),
-        ("_C18", default_field_parse),
-        ("_C19", default_field_parse),
-        ("_C20", default_field_parse),
-        ("_C21", default_field_parse),
-        ("_C22", default_field_parse),
-        ("_C23", default_field_parse),
-        ("_C24", default_field_parse),
-        ("_C25", default_field_parse),
-        ("_C26", default_field_parse),
-        ("_C27", default_field_parse),
-        ("_C28", default_field_parse),
-        ("_C29", default_field_parse),
-        ("_C30", default_field_parse),
-        ("_C31", default_field_parse),
-        ("_C32", default_field_parse),
-        ("_C33", default_field_parse),
-        ("_C34", default_field_parse),
-        ("_C35", default_field_parse),
-        ("_C36", default_field_parse),
-        ("_C37", default_field_parse),
-        ("_C38", default_field_parse),
-        ("_C39", default_field_parse),
-        ("_C40", default_field_parse),
-        ("_C41", default_field_parse),
-        ("_C42", default_field_parse),
-        ("_C43", default_field_parse),
-        ("_C44", default_field_parse),
-        ("_C45", default_field_parse),
-        ("_C46", default_field_parse),
-        ("_C47", default_field_parse),
-        ("_C48", default_field_parse),
-        ("_C49", default_field_parse),
-        ("_C50", default_field_parse),
-        ("_C51", default_field_parse),
-        ("_C52", default_field_parse),
-        ("_C53", default_field_parse),
-        ("_C54", default_field_parse),
-        ("_C55", default_field_parse),
-        ("_C56", default_field_parse),
-        ("_C57", default_field_parse),
-        ("_C58", default_field_parse),
-        ("_C59", default_field_parse),
-        ("_C60", default_field_parse),
-        ("_C61", default_field_parse),
-        ("_C62", default_field_parse),
-        ("_C63", default_field_parse),
-        ("_C64", default_field_parse),
-        ("_C65", default_field_parse),
-        ("_C66", default_field_parse),
-        ("_C67", default_field_parse),
-        ("_C68", default_field_parse),
-        ("_C69", default_field_parse),
-        ("_C70", default_field_parse),
-        ("_C71", default_field_parse),
-        ("_C72", default_field_parse),
-        ("_C73", default_field_parse),
-        ("_C74", default_field_parse),
-        ("_C75", default_field_parse),
-        ("_C76", default_field_parse),
-        ("_C77", default_field_parse),
-        ("_C78", default_field_parse),
-        ("_C79", default_field_parse),
-        ("_C80", default_field_parse),
-        ("_C81", default_field_parse),
-        ("_C82", default_field_parse),
-        ("_C83", default_field_parse),
-        ("_C84", default_field_parse),
-        ("_C85", default_field_parse),
-        ("_C86", default_field_parse),
-        ("_C87", default_field_parse),
-        ("_C88", default_field_parse),
-        ("_C89", default_field_parse),
-        ("_C90", default_field_parse),
-        ("_C91", default_field_parse),
-        ("_C92", default_field_parse),
-        ("_C93", default_field_parse),
-        ("_C94", default_field_parse),
-        ("_C95", default_field_parse),
+        *critter_fields,
+        ("npc_flags", DefaultParser),
+        ("npc_leader", ByteParser),
+        ("npc_ai_packet", DefaultParser),
+        ("npc_combat_focus", ByteParser),
+        ("npc_who_hit_me_last", ByteParser),
+        ("npc_experience_worth", DefaultParser),
+        ("npc_experience_pool", DefaultParser),
+        ("npc_waypoints", ArrayParser),
+        ("npc_current_waypoint", DefaultParser),
+        ("npc_standpoint_day", ArrayParser),
+        ("npc_standpoint_night", ArrayParser),
+        ("npc_origin", DefaultParser),
+        ("npc_faction", DefaultParser),
+        ("npc_retail_price_multiplier", DefaultParser),
+        ("npc_substitute_inventory", ArrayParser),
+        ("npc_reaction_base", DefaultParser),
+        ("npc_social_class", DefaultParser),
+        ("npc_reaction_pc", ArrayParser),
+        ("npc_reaction_level", ArrayParser),
+        ("npc_reaction_time", ArrayParser),
+        ("npc_wait", DefaultParser),
+        ("npc_generator", DefaultParser),
+        ("npc_22", PadIntParser),
+        ("npc_damages", ArrayParser),
+        ("npc_shitlist", ArrayParser),
+        *(("npc_%d" % i, NullParser) for i in range(25, 64))
     )
 
     trap_fields = (
         *base_fields,
-        ("_t0", default_field_parse),
-        ("_t1", default_field_parse),
-        ("_t2", default_field_parse),
-        ("_t3", default_field_parse),
-        ("_t4", default_field_parse),
-        ("_t5", default_field_parse),
-        ("_t6", default_field_parse),
-        ("_t7", default_field_parse),
-        ("_t8", default_field_parse),
-        ("_t9", default_field_parse),
-        ("_t10", default_field_parse),
-        ("_t11", default_field_parse),
-        ("_t12", default_field_parse),
-        ("_t13", default_field_parse),
-        ("_t14", default_field_parse),
-        ("_t15", default_field_parse),
-        ("_t16", default_field_parse),
-        ("_t17", default_field_parse),
-        ("_t18", default_field_parse),
-        ("_t19", default_field_parse),
-        ("_t20", default_field_parse),
-        ("_t21", default_field_parse),
-        ("_t22", default_field_parse),
-        ("_t23", default_field_parse),
-        ("_t24", default_field_parse),
-        ("_t25", default_field_parse),
-        ("_t26", default_field_parse),
-        ("_t27", default_field_parse),
-        ("_t28", default_field_parse),
-        ("_t29", default_field_parse),
-        ("_t30", default_field_parse),
-        ("_t31", default_field_parse)
+        ("trap_flags", DefaultParser),
+        ("trap_difficulty", DefaultParser),
+        ("trap_2", PadIntParser),
+        ("trap_3", PadByteParser),
+        ("trap_4", PadByteParser),
+        *(("trap_%d" % i, NullParser) for i in range(5, 32))
     )

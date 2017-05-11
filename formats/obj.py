@@ -4,10 +4,15 @@ from formats.fields import Fields
 import io
 from typing import Tuple, List
 from enum import IntEnum
-from collections import OrderedDict
+from collections import UserDict
 import struct
 
 import numpy as np
+
+class ObjectKind(IntEnum):
+    Object = 0x0001
+    Prototype = 0xFFFF
+
 
 class ObjectType(IntEnum):
     Wall = 0
@@ -26,17 +31,27 @@ class ObjectType(IntEnum):
     Written = 13
     Generic = 14
     Player = 15
-    Critter = 16
+    NPC = 16
     Trap = 17
 
-class ObjectProperties(object):
-    flags_parsers = (
-        FileStruct("<H"),    # 0
-        FileStruct("<H4B"),  # 1
-        FileStruct("<H8B"),  # 2
+
+class ObjectProperties(UserDict):
+    parsers = (
+        None,
+        None,
+        None,
         FileStruct("<H12B"), # 3
         FileStruct("<H16B"), # 4
         FileStruct("<H20B")  # 5
+    )
+
+    pro_parsers = (
+        None,
+        None,
+        None,
+        FileStruct("<12B"), # 3
+        FileStruct("<16B"), # 4
+        FileStruct("<20B")  # 5
     )
 
     # Mapping from type to tuple of all (field name, parser)
@@ -53,11 +68,11 @@ class ObjectProperties(object):
         Fields.food_fields,
         Fields.scroll_fields,
         Fields.key_fields,
-        Fields.keyring_fields,
+        Fields.key_ring_fields,
         Fields.written_fields,
         Fields.generic_fields,
         Fields.player_fields,
-        Fields.critter_fields,
+        Fields.npc_fields,
         Fields.trap_fields
     )
 
@@ -68,7 +83,7 @@ class ObjectProperties(object):
         3, # 01 Portal
         3, # 02 Container
         3, # 03 Scenery
-        0, # 04 Projectile
+        3, # 04 Projectile
         4, # 05 Weapon
         4, # 06 Ammo
         4, # 07 Armor
@@ -85,23 +100,48 @@ class ObjectProperties(object):
     )
 
     @classmethod
-    def read_from(cls, obj_file: io.FileIO, obj_type:ObjectType=None) -> "ObjectProperties":
-        raise NotImplementedError()
+    def read_from(cls, obj_file: io.FileIO, obj_type:ObjectType=None, prototype=False) -> "ObjectProperties":
+        # raise NotImplementedError()
 
-        field_count, *raw_flags = cls.flags_parsers[cls.type_flags_length[obj_type]].unpack_from_file(obj_file)
+        properties = cls()
+        if not prototype:
+            field_count, *raw_flags = cls.parsers[cls.type_flags_length[obj_type]].unpack_from_file(obj_file)
 
-        # Bytes to bit array.
+        else:
+            raw_flags = cls.pro_parsers[cls.type_flags_length[obj_type]].unpack_from_file(obj_file)
+            
+
         flags = np.fliplr(np.unpackbits(np.array(raw_flags, dtype=np.uint8)).reshape(-1, 8)).flatten()
 
-        if (field_count != np.sum(flags)):
-            raise RuntimeError("Field count doesn't match actual: %d versus %d" % (field_count, np.sum(flags)))
+        if (not prototype and field_count != np.sum(flags)):
+                raise RuntimeError("Field count doesn't match actual: %d versus %d" % (field_count, np.sum(flags)))
 
         # Parse fields from file
-        raw_fields = {}
-        for index in np.nonzero(flags)[0]:
-            name, parse_func = cls.type_fields[obj_type][index]
-            print(name)
-            raw_fields[name] = parse_func(obj_file)
+        for name, parser in cls.type_fields[obj_type]:
+            properties[name] = parser.read_from(obj_file)
+
+            # if name == "scripts" or name == "known_name":
+            #     print(properties[name])
+
+        return properties
+
+    def write_to(self, obj_file: io.FileIO, obj_type:ObjectType=None, prototype=False):
+
+        if not prototype:
+            flags = []
+
+            for name, parser in self.type_fields[obj_type]:
+                if name in self:
+                    flags.append(1)
+                else:
+                    flags.append(0)
+
+            flags = np.array(flags)
+            raw_flags = np.packbits(np.fliplr(flags.reshape(-1, 8)))
+
+        else:
+            raise NotImplementedError("Can not write prototype to file.")
+
 
 
 class ObjectIdentifier(object):
@@ -126,16 +166,16 @@ class ObjectIdentifier(object):
 
         # Perhaps better to just store the raw data during init.
         return (
-            int.to_bytes(self.data[0], 4, 'little'),
-            int.to_bytes(self.data[1], 2, 'little'),
-            int.to_bytes(self.data[2], 2, 'little'),
-            int.to_bytes(self.data[3], 2, 'big'),
-            int.to_bytes(self.data[4], 6, 'big'),
+            int.to_bytes(self.data[0], 4, 'little') +
+            int.to_bytes(self.data[1], 2, 'little') +
+            int.to_bytes(self.data[2], 2, 'little') +
+            int.to_bytes(self.data[3], 2, 'big') +
+            int.to_bytes(self.data[4], 6, 'big')
         )
 
 
 class Object(object):
-
+    Kind = ObjectKind
     Type = ObjectType
     Properties = ObjectProperties
     Identifier = ObjectIdentifier
@@ -144,24 +184,31 @@ class Object(object):
     version_parser = FileStruct(version_format)
     valid_version = 119
 
-    # First 2 bytes decide which constructor(?) to use, 1 for .mob files, -1 for .pro files
-    # There is also something called obj dif file, probably patch related.
-    constructor_type_format = "H"
+    # First 2 bytes specify what kind of object is being described, either
+    # prototype or normal
+    kind_format = "H"
+    kind = ObjectKind.Object
 
     # .mob files:
-    unknown_data_format = "30s"
+    unknown_data_format = "6s"
+    prototype_format = "I"
+    unknown_data2_format = "20s"
     raw_identifier_format = "16s"  # matches file name, unique per entity per map
     raw_type_format = "I"  # If that does not fail reads 2 more bytes
 
-    full_format = "<" + "".join((constructor_type_format, unknown_data_format,
+    full_format = "<" + "".join((kind_format, unknown_data_format,
+                                 prototype_format, unknown_data2_format,
                                  raw_identifier_format, raw_type_format))
     full_parser = FileStruct(full_format)
 
-    def __init__(self, version: int, type: ObjectType, identifier: ObjectIdentifier, properties: ObjectProperties):
+    def __init__(self, version: int, prototype: int, type: ObjectType, identifier: ObjectIdentifier,
+                 properties: ObjectProperties):
 
         self.version = version
+        self.prototype = prototype
         self.type = type
         self.identifier = identifier
+        self.properties = properties
 
     @classmethod
     def read_from(cls, obj_file: io.FileIO) -> "Object":
@@ -171,20 +218,51 @@ class Object(object):
         if (version != cls.valid_version):
             raise TypeError("Arkanum does not support object version %d" % version)
 
-        constructor, unknown_data, raw_identifier, raw_type = cls.full_parser.unpack_from_file(obj_file)
+        kind, _, prototype, _2, raw_identifier, raw_type = cls.full_parser.unpack_from_file(obj_file)
 
         type = Object.Type(raw_type)
 
-        properties = Object.Properties.read_from(obj_file, obj_type=type)
+        if kind == cls.Kind.Prototype:
+            properties = Object.Properties.read_from(obj_file, obj_type=type, prototype=True)
+            return Prototype(version=version,
+                             prototype=prototype,
+                             type=type,
+                             identifier=ObjectIdentifier(raw_identifier),
+                             properties=properties)
 
+        elif kind == cls.Kind.Object:
 
-        return Object(version=version,
-                      type=type,
-                      identifier=Object.Identifier(raw_identifier),
-                      properties=properties)
+            properties = Object.Properties.read_from(obj_file, obj_type=type)
+
+            return Object(version=version,
+                          prototype=prototype,
+                          type=type,
+                          identifier=Object.Identifier(raw_identifier),
+                          properties=properties)
 
     def write_to(self, obj_file: io.FileIO) -> None:
 
-        raise NotImplementedError()
-        # self.version_parser.pack_into_file(self.version)
-        # self.full_parser.pack_into_file(, unknown_data)
+        self.version_parser.pack_into_file(obj_file, self.valid_version)
+
+        self.full_parser.pack_into_file(obj_file, self.kind, (b'\x00'*6), self.prototype, (b'\x00'*20), self.identifier.to_bytes(), self.type)
+
+        self.properties.write_to(obj_file, obj_type=self.type, prototype=self.kind==ObjectKind.Prototype)
+
+class Prototype(Object):
+    kind = ObjectKind.Prototype
+
+    @classmethod
+    def read(cls, pro_file_path: str) -> "Prototype":
+
+        with open(pro_file_path, "rb") as pro_file:
+
+            pro = cls.read_from(pro_file)
+            pro.file_path = pro_file_path
+
+            return pro
+
+    def write(self, pro_file_path: str) -> None:
+
+        with open(pro_file_path, "wb") as pro_file:
+
+            self.write_to(pro_file)
