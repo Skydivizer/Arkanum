@@ -247,7 +247,7 @@ class Fields:
 
     item_fields = (
         ("item_flags", DefaultParser),
-        ("item_parent", ArrayParser),
+        ("item_parent", ByteParser),
         ("item_weight", DefaultParser),
         ("item_weight_magic_adj", DefaultParser),
         ("item_worth", DefaultParser),

@@ -9,6 +9,8 @@ import struct
 
 import numpy as np
 
+count = {}
+
 class ObjectKind(IntEnum):
     Object = 0x0001
     Prototype = 0xFFFF
@@ -99,31 +101,46 @@ class ObjectProperties(UserDict):
         3  # 17 Trap
     )
 
+    @staticmethod
+    def unpack_flags(raw_flags):
+        return np.fliplr(np.unpackbits(np.array(raw_flags, dtype=np.uint8)).reshape(-1, 8)).flatten()
+
+    @staticmethod
+    def pack_flags(flags):
+        return np.packbits(np.fliplr(flags.reshape(-1, 8)))
+
     @classmethod
-    def read_from(cls, obj_file: io.FileIO, obj_type:ObjectType=None, prototype=False) -> "ObjectProperties":
-        # raise NotImplementedError()
-
+    def read_from_prototype(cls, pro_file: io.FileIO, obj_type: ObjectType=None) -> "ObjectProperties":
         properties = cls()
-        if not prototype:
-            field_count, *raw_flags = cls.parsers[cls.type_flags_length[obj_type]].unpack_from_file(obj_file)
 
-        else:
-            raw_flags = cls.pro_parsers[cls.type_flags_length[obj_type]].unpack_from_file(obj_file)
-            
+        raw_flags = cls.pro_parsers[cls.type_flags_length[obj_type]].unpack_from_file(obj_file)
+        flags = ObjectProperties.unpack_flags(raw_flags)
 
-        flags = np.fliplr(np.unpackbits(np.array(raw_flags, dtype=np.uint8)).reshape(-1, 8)).flatten()
-
-        if (not prototype and field_count != np.sum(flags)):
-                raise RuntimeError("Field count doesn't match actual: %d versus %d" % (field_count, np.sum(flags)))
-
-        # Parse fields from file
         for name, parser in cls.type_fields[obj_type]:
             properties[name] = parser.read_from(obj_file)
 
-            # if name == "scripts" or name == "known_name":
-            #     print(properties[name])
+        return properties
+
+    @classmethod
+    def read_from(cls, obj_file: io.FileIO, obj_type:ObjectType=None, prototype=False) -> "ObjectProperties":
+        if prototype:
+            return read_from_prototype(cls, pro_file=obj_file, obj_type=obj_type)
+
+        properties = cls()
+
+        field_count, *raw_flags = cls.parsers[cls.type_flags_length[obj_type]].unpack_from_file(obj_file)
+        flags = ObjectProperties.unpack_flags(raw_flags)
+
+        if (field_count != np.sum(flags)):
+            raise RuntimeError("Field count doesn't match actual: %d versus %d" % (field_count, np.sum(flags)))
+
+        for i in flags.nonzero()[0]:
+            name, parser = cls.type_fields[obj_type][i]
+
+            properties[name] = parser.read_from(obj_file)
 
         return properties
+        
 
     def write_to(self, obj_file: io.FileIO, obj_type:ObjectType=None, prototype=False):
 
@@ -138,6 +155,8 @@ class ObjectProperties(UserDict):
 
             flags = np.array(flags)
             raw_flags = np.packbits(np.fliplr(flags.reshape(-1, 8)))
+
+            raise NotImplementedError("Can not write object fields to file.")
 
         else:
             raise NotImplementedError("Can not write prototype to file.")
