@@ -4,12 +4,13 @@ from formats.fields import Fields
 import io
 from typing import Tuple, List
 from enum import IntEnum
-from collections import UserDict
+from collections import UserDict, namedtuple
 import struct
 
 import numpy as np
 
-count = {}
+RawObject = namedtuple("RawObject", ["version", "prototype", "type", "identifier", "properties", "unknown"])
+
 
 class ObjectKind(IntEnum):
     Object = 0x0001
@@ -129,11 +130,10 @@ class ObjectProperties(UserDict):
         properties = cls()
 
         field_count, *raw_flags = cls.parsers[cls.type_flags_length[obj_type]].unpack_from_file(obj_file)
-        flags = ObjectProperties.unpack_flags(raw_flags)
 
+        flags = ObjectProperties.unpack_flags(raw_flags)
         if (field_count != np.sum(flags)):
             raise RuntimeError("Field count doesn't match actual: %d versus %d" % (field_count, np.sum(flags)))
-
         for i in flags.nonzero()[0]:
             name, parser = cls.type_fields[obj_type][i]
 
@@ -154,9 +154,17 @@ class ObjectProperties(UserDict):
                     flags.append(0)
 
             flags = np.array(flags)
+            field_count = np.sum(flags)
             raw_flags = np.packbits(np.fliplr(flags.reshape(-1, 8)))
 
-            raise NotImplementedError("Can not write object fields to file.")
+            self.parsers[self.type_flags_length[obj_type]].pack_into_file(obj_file, field_count, *raw_flags)
+
+            for i in flags.nonzero()[0]:
+                name, parser = self.type_fields[obj_type][i]
+
+                parser.write_to(obj_file, self[name])
+
+            # raise NotImplementedError("Can not write object fields to file.")
 
         else:
             raise NotImplementedError("Can not write prototype to file.")
@@ -221,49 +229,57 @@ class Object(object):
     full_parser = FileStruct(full_format)
 
     def __init__(self, version: int, prototype: int, type: ObjectType, identifier: ObjectIdentifier,
-                 properties: ObjectProperties):
+                 properties: ObjectProperties, unknown):
 
         self.version = version
         self.prototype = prototype
         self.type = type
         self.identifier = identifier
         self.properties = properties
+        self.unknown = unknown
 
     @classmethod
-    def read_from(cls, obj_file: io.FileIO) -> "Object":
-
+    def read_from_raw(cls, obj_file: io.FileIO) -> RawObject:
         version, = cls.version_parser.unpack_from_file(obj_file)
 
         if (version != cls.valid_version):
             raise TypeError("Arkanum does not support object version %d" % version)
 
-        kind, _, prototype, _2, raw_identifier, raw_type = cls.full_parser.unpack_from_file(obj_file)
+        kind, unknown1, prototype, unknown2, raw_identifier, raw_type = cls.full_parser.unpack_from_file(obj_file)
 
         type = Object.Type(raw_type)
 
         if kind == cls.Kind.Prototype:
-            properties = Object.Properties.read_from(obj_file, obj_type=type, prototype=True)
-            return Prototype(version=version,
-                             prototype=prototype,
-                             type=type,
-                             identifier=ObjectIdentifier(raw_identifier),
-                             properties=properties)
+            raise ValueError("Prototype must be created via Prototype class")
 
         elif kind == cls.Kind.Object:
 
             properties = Object.Properties.read_from(obj_file, obj_type=type)
 
-            return Object(version=version,
-                          prototype=prototype,
-                          type=type,
-                          identifier=Object.Identifier(raw_identifier),
-                          properties=properties)
+            return RawObject(version=version,
+                             prototype=prototype,
+                             type=type,
+                             identifier=Object.Identifier(raw_identifier),
+                             properties=properties,
+                             unknown=(unknown1, unknown2))
+
+
+    @classmethod
+    def read_from(cls, obj_file: io.FileIO) -> "Object":
+        rob = read_from_raw(cls, obj_file=obj_file)
+        
+        return Object(version=rob.version,
+                      prototype=rob.prototype,
+                      type=rob.type,
+                      identifier=rob.identifier,
+                      properties=rob.properties,
+                      unknown=rob.unknown)
 
     def write_to(self, obj_file: io.FileIO) -> None:
 
         self.version_parser.pack_into_file(obj_file, self.valid_version)
 
-        self.full_parser.pack_into_file(obj_file, self.kind, (b'\x00'*6), self.prototype, (b'\x00'*20), self.identifier.to_bytes(), self.type)
+        self.full_parser.pack_into_file(obj_file, self.kind, self.unknown[0], self.prototype, self.unknown[1], self.identifier.to_bytes(), self.type)
 
         self.properties.write_to(obj_file, obj_type=self.type, prototype=self.kind==ObjectKind.Prototype)
 

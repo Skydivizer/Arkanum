@@ -49,13 +49,12 @@ class PositionParser(object):
 
     @classmethod
     def write_to(cls, file, data):
-
         if data:
-            cls.exists_parser.pack_into_file(file, (1))
-            cls.parser.pack_into_file(data)
+            cls.exists_parser.pack_into_file(file, 1)
+            cls.parser.pack_into_file(file, *data)
 
         else:
-            cls.exists_parser.pack_into_file(file, (0))
+            cls.exists_parser.pack_into_file(file, 0)
 
 
 class ArrayParser(object):
@@ -80,8 +79,7 @@ class ArrayParser(object):
             flags_size = unpacked[-1]
 
             # Unpack flags
-            raw_flags = FileStruct("<%dB"% (flags_size * 4)).unpack_from_file(file)
-            flags = int.from_bytes(raw_flags, 'little')
+            flags = FileStruct("<%dB"% (flags_size * 4)).unpack_from_file(file)
 
             return _1, array, flags, flags_size
 
@@ -98,11 +96,12 @@ class ArrayParser(object):
             element_count = len(array)
             element_size = len(array[0])
 
-            cls.header_parser.pack_into_file(file, (element_size, element_count, _1))
+            cls.header_parser.pack_into_file(file, element_size, element_count, _1)
             
             array_format = ("%ds" % element_size) * element_count
-            flags_format = "<%dB"% (flags_size * 4)
-            FileStruct("<" + array_format + flags_size_format + flags_format).pack_into_file(file, (*array, flags_size, *flags))
+            flags_format = "%dB"% (flags_size * 4)
+            fmt = "<" + array_format + cls.flags_size_format + flags_format
+            FileStruct(fmt).pack_into_file(file, *array, flags_size, *flags)
 
         else:
             cls.exists_parser.pack_into_file(file, (0))
@@ -162,7 +161,7 @@ class PadByteParser(object):
         val, = cls.parser.unpack_from_file(file)
 
         if val != 0:
-            print(val)
+            raise RuntimeError("Field padding was not null.")
 
     @classmethod
     def write_to(cls, file):
@@ -177,7 +176,7 @@ class PadIntParser(object):
         val, = cls.parser.unpack_from_file(file)
 
         if val != 0:
-            print(val)
+            raise RuntimeError("Field padding was not null.")
 
     @classmethod
     def write_to(cls, file):
@@ -192,7 +191,7 @@ class PadLongParser(object):
         val, = cls.parser.unpack_from_file(file)
 
         if val != 0:
-            print(val)
+            raise RuntimeError("Field padding was not null.")
 
     @classmethod
     def write_to(cls, file):
