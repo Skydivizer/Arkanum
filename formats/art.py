@@ -3,6 +3,7 @@ import io
 from formats.helpers import FileStruct
 from collections import namedtuple
 from typing import Optional, List
+from operator import attrgetter
 
 # Sources:
 # Crypton's: Art File Format - Complete specification (site is down)
@@ -19,6 +20,7 @@ _art_header = namedtuple('ArtHeader', [
 _art_frame_header = namedtuple('ArtFrameHeader', [
     'width', 'height', 'size', 'offset_x', 'offset_y', 'delta_x', 'delta_y'
 ])
+_art_frame_header.getter = attrgetter(*_art_frame_header._fields)
 
 
 class Art(object):
@@ -108,26 +110,86 @@ class Art(object):
             self.delta_y = delta_y
             self.data = data
 
-        def read_data_from(self, art_file: io.FileIO) -> None:
+            self.read_from = self.__read_from
+
+        @classmethod
+        def read_data_from(cls, art_file: io.FileIO, size) -> List[int]:
             """Read pallete index data from file.
 
-            Tries to read "self.size" bytes.
+            Tries to read "size" bytes.
 
             Arguments:
                 art_file: An open art file.
+                size: Size of frame data in bytes.
+
+            Returns:
+                A list of "size" indices.
             """
-            parser = FileStruct('<{}{}'.format(self.size, self.index_format))
-            self.data = parser.unpack_from_file(art_file)
+            parser = FileStruct('<{}{}'.format(size, cls.index_format))
+            return parser.unpack_from_file(art_file)
 
         @classmethod
-        def read_from(cls, art_file: io.FileIO):
+        def read_header_from(cls, art_file: io.FileIO) -> dict:
             """Read the frame header from a file.
 
             Arguments:
                 art_file: An open art file.
+
+            Returns:
+                A mapping from attribute names to their values.
             """
-            header = cls._header(*cls.parser.unpack_from_file(art_file))
-            return cls(**header._asdict())
+            return _art_frame_header(*cls.parser.unpack_from_file(art_file))
+
+        @classmethod
+        def read_from(cls, art_file: io.FileIO, header: bool=True,
+                      data: bool=True) -> "Frame":
+            """Read the frame header and/or data from a file.
+
+            Functionality differs if called as class or instance method. If
+            called as class method a new Art Frame object created. Otherwise
+            the read data will be attached to the current object.
+
+            Arguments:
+                art_file: An open art file.
+                header: Set to false if the header should not be read.
+                data: Set to false if the frame data should not be read.
+
+            Returns:
+                If called as classmethod a new Art Frame object, else nothing.
+            """
+            header_data = cls.read_header_from(art_file) if header else None
+            frame_data = cls.read_data_from(art_file,
+                                            header_data.size) if data else None
+
+            return cls(data=frame_data, **header_data._asdict())
+
+        def __read_from(self, art_file: io.FileIO, header=True,
+                        data=True) -> None:
+            header_data = self.read_header_from(art_file) if header else None
+            if header_data:
+                for key, val in header_data.items():
+                    setattr(self, key, val)
+            if data:
+                self.data = self.read_data_from(art_file, self.size)
+
+        def write_to(self,
+                     art_file: io.FileIO,
+                     header: bool=True,
+                     data: bool=True) -> None:
+            """Serialize the frame or some part of it into a file stream.
+
+            Arguments:
+                art_file: An open art file.
+                header: Set to false if the header should not be written.
+                data: Set to false if the frame data should not be written.
+            """
+            if header:
+                header_data = _art_frame_header.getter(self)
+                self.parser.pack_into_file(art_file, header_data)
+            if data:
+                parser = FileStruct(
+                    '<{}{}'.format(self.size, self.index_format))
+                parser.pack_into_file(art_file, self.data)
 
     class Palette(object):
         """A color palette from an Art object.
@@ -154,13 +216,16 @@ class Art(object):
             self.data = data
 
         @classmethod
-        def read_from(cls, art_file: io.FileIO):
+        def read_from(cls, art_file: io.FileIO) -> "Pallete":
             """Read the palette from a file.
 
             Will try to read 1024 bytes from the given file.
 
             Arguments:
                 art_file: An open art file.
+
+            Returns:
+                A new Art Palette object.
             """
             data = cls.parser.unpack_from_file(art_file)
             return cls(data)
@@ -206,7 +271,12 @@ class Art(object):
 
         Arguments:
             art_file_path: Path to art file.
+
+        Returns:
+            A new Art object.
         """
+        if art_file_path.endswith("BadArt.ART"):
+            return None
         with open(art_file_path, "rb") as art_file:
 
             raw_header = cls.parser.unpack_from_file(art_file)
@@ -214,14 +284,53 @@ class Art(object):
                                  *raw_header[7:9], raw_header[9:17],
                                  raw_header[17:25], raw_header[25:33])
 
+
             palettes = [
                 cls.Palette.read_from(art_file)
                 for _ in header.palette_pointers
             ]
             frames = [
-                cls.Frame.read_from(art_file)
+                cls.Frame.read_from(art_file, data=False)
                 for _ in range(header.num_frames * header.rotations)
             ]
             for frame in frames:
-                frame.read_data_from(art_file)
+                frame.read_from(art_file, header=False)
             return cls(palettes=palettes, frames=frames, **header._asdict())
+
+        def write(self, art_file_path: str) -> None:
+            """Serialize the art object to a file at the given path.
+
+            Arguments:
+                art_file_path: Path to file.
+            """
+            with open(art_file_path, "wb") as art_file:
+
+                def dflt_lst(item, size=(8,), fill=(0,)):
+                    return item if item else [
+                        fill[s] for s in range(len(size))
+                        for i in range(size[s])
+                    ]
+
+                # Make sure there are as many (pseudo) pallete pointers as
+                # there are palettes.
+                n_pointers = len([p for p in self.palette_pointers if p != 0])
+                if n_pointers != len(self.palettes):
+                    palette_pointers = *dflt_lst(
+                        self.palette_pointers,
+                        (len(self.palettes), 4 - len(self.palettes)), (1, 0)),
+                else:
+                    palette_pointers = self.palette_pointers
+
+                cls.parser.pack_into_file(art_file, self.flags, self.rotations,
+                                          palette_pointers, self.key_frame,
+                                          len(self.frames),
+                                          *dflt_lst(self.info_pointers),
+                                          *dflt_lst(self.stage_pointers))
+                for pallete in self.palettes:
+                    pallete.write_to(art_file)
+
+                for frame in self.frames:
+                    frame.write_to(art_file, data=False)
+
+                for frame in self.frames:
+                    frame.write_to(art_file, header=False)
