@@ -30,7 +30,7 @@ class Art(object):
         flags: Desribes the type of the art object.
         frame_rate: Speed of the animation in frames per second.
         rotations: Number of cardinal directions of the art.
-        key_frame: Animation is triggered on the frame with this index.
+        key_frame: Event attached to animation is triggered on this frame.
         palettes: List of palletes.
         frames: List of frames.
     """
@@ -248,7 +248,7 @@ class Art(object):
             flags: Desribes the type of the art object.
             frame_rate: Speed of the animation in frames per second.
             rotations: Number of cardinal directions of the art.
-            key_frame: Animation is triggered on the frame with this index.
+            key_frame: Event attached to animation is triggered on this frame.
             palettes: List of palletes.
             frames: List of frames.
         """
