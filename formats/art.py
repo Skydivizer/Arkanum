@@ -1,5 +1,6 @@
 """This module defines the format and parsing of .ART files."""
 import io
+import enum
 from formats.helpers import FileStruct
 from collections import namedtuple
 from typing import Optional, List
@@ -23,6 +24,25 @@ _art_frame_header = namedtuple('ArtFrameHeader', [
 _art_frame_header.getter = attrgetter(*_art_frame_header._fields)
 
 
+class ArtFlags(enum.IntFlag):
+    """This class indicates the type of art in the file.
+
+    :param fixed: The art does look equal in each rotation. Thus the
+        frames are only present once.
+    :param mobile: The art is used during motion. This indicates that the delta
+        values of the frames are used.
+    :param font: The art is a font.
+    :param facade: The art is a facade file.
+    :param unknown: Only set on some eye candy art files.
+    """
+
+    fixed = 1 << 0
+    mobile = 1 << 1
+    font = 1 << 2
+    facade = 1 << 3
+    unknown = 1 << 4
+
+
 class Art(object):
     """An Art object is the deserialization of an .ART file.
 
@@ -34,6 +54,8 @@ class Art(object):
         palettes: List of palletes.
         frames: List of frames.
     """
+
+    Flags = ArtFlags
 
     flags_format = "I"
     frame_rate_format = "I"
@@ -141,8 +163,10 @@ class Art(object):
             return _art_frame_header(*cls.parser.unpack_from_file(art_file))
 
         @classmethod
-        def read_from(cls, art_file: io.FileIO, header: bool=True,
-                      data: bool=True) -> "Frame":
+        def read_from(cls,
+                      art_file: io.FileIO,
+                      header: bool=True,
+                      data: bool=True) -> Optional["Frame"]:
             """Read the frame header and/or data from a file.
 
             Functionality differs if called as class or instance method. If
@@ -151,20 +175,23 @@ class Art(object):
 
             Arguments:
                 art_file: An open art file.
-                header: Set to false if the header should not be read.
+                header: Set to false if the header should not be read. This
+                    must be true when creating a new instance.
                 data: Set to false if the frame data should not be read.
 
             Returns:
                 If called as classmethod a new Art Frame object, else nothing.
             """
-            header_data = cls.read_header_from(art_file) if header else None
+            header_data = cls.read_header_from(art_file)
             frame_data = cls.read_data_from(art_file,
                                             header_data.size) if data else None
 
             return cls(data=frame_data, **header_data._asdict())
 
-        def __read_from(self, art_file: io.FileIO, header=True,
-                        data=True) -> None:
+        def __read_from(self,
+                        art_file: io.FileIO,
+                        header: bool=True,
+                        data: bool=True) -> None:
             header_data = self.read_header_from(art_file) if header else None
             if header_data:
                 for key, val in header_data.items():
@@ -275,23 +302,20 @@ class Art(object):
         Returns:
             A new Art object.
         """
-        if art_file_path.endswith("BadArt.ART"):
-            return None
         with open(art_file_path, "rb") as art_file:
-
             raw_header = cls.parser.unpack_from_file(art_file)
-            header = _art_header(*raw_header[0:3], raw_header[3:7],
-                                 *raw_header[7:9], raw_header[9:17],
-                                 raw_header[17:25], raw_header[25:33])
-
-
+            header = _art_header(
+                ArtFlags(raw_header[0]), *raw_header[1:3], raw_header[3:7],
+                *raw_header[7:9], raw_header[9:17], raw_header[17:25],
+                raw_header[25:33])
             palettes = [
                 cls.Palette.read_from(art_file)
-                for _ in header.palette_pointers
+                for p in header.palette_pointers if p != 0
             ]
             frames = [
                 cls.Frame.read_from(art_file, data=False)
-                for _ in range(header.num_frames * header.rotations)
+                for _ in range(header.num_frames * (
+                    1 if ArtFlags.fixed in header.flags else header.rotations))
             ]
             for frame in frames:
                 frame.read_from(art_file, header=False)
@@ -313,19 +337,19 @@ class Art(object):
 
                 # Make sure there are as many (pseudo) pallete pointers as
                 # there are palettes.
-                n_pointers = len([p for p in self.palette_pointers if p != 0])
+                n_pointers = len([p for p in self._palette_pointers if p != 0])
                 if n_pointers != len(self.palettes):
                     palette_pointers = *dflt_lst(
-                        self.palette_pointers,
+                        self._palette_pointers,
                         (len(self.palettes), 4 - len(self.palettes)), (1, 0)),
                 else:
-                    palette_pointers = self.palette_pointers
+                    palette_pointers = self._palette_pointers
 
                 cls.parser.pack_into_file(art_file, self.flags, self.rotations,
                                           palette_pointers, self.key_frame,
                                           len(self.frames),
-                                          *dflt_lst(self.info_pointers),
-                                          *dflt_lst(self.stage_pointers))
+                                          *dflt_lst(self._info_pointers),
+                                          *dflt_lst(self._stage_pointers))
                 for pallete in self.palettes:
                     pallete.write_to(art_file)
 
