@@ -1,4 +1,4 @@
-"""Fk."""
+"""Flags used by art objects."""
 import enum
 
 

@@ -1,4 +1,4 @@
-"""Test."""
+"""Defines the format of frames in art objects.""""
 from formats.helpers import FileStruct
 import typing as t
 import io

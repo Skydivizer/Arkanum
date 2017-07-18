@@ -1,4 +1,4 @@
-"""Gay."""
+"""Defines the format of pallets in art objects."""
 from formats.helpers import FileStruct
 
 import io
